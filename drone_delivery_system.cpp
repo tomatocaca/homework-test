@@ -1758,12 +1758,25 @@ void userPlaceOrder(string userName) {
     string toStation = STATION_CODES[toChoice - 1];
     int delMinutes = calcDeliveryTime(fromStation, toStation);
 
-    if (fromStation == toStation) {
-        cout << "\n起点和终点相同！配送时长 0 分钟（同站取件）。" << endl;
-    } else {
-        cout << "\n预计配送时长：约 " << delMinutes << " 分钟（"
-             << fromStation << " → " << toStation << "）" << endl;
+    while (fromStation == toStation) {
+        cout << "\n起点和终点不能相同！请重新选择配送终点：" << endl;
+        for (int i = 0; i < 4; i++) {
+            if (STATION_CODES[i] != fromStation) {
+                cout << "  " << (i + 1) << ". " << STATION_CODES[i]
+                     << " — " << STATION_NAMES[i] << endl;
+            }
+        }
+        cout << "请选择: ";
+        toChoice = readInt();
+        if (toChoice < 1 || toChoice > 4) {
+            cout << "无效选择，默认终点为天马公寓(A)。" << endl;
+            toChoice = 1;
+        }
+        toStation = STATION_CODES[toChoice - 1];
     }
+    delMinutes = calcDeliveryTime(fromStation, toStation);
+    cout << "\n预计配送时长：约 " << delMinutes << " 分钟（"
+         << fromStation << " → " << toStation << "）" << endl;
 
     // 输入收件人信息
     string rname, rphone, raddr;
