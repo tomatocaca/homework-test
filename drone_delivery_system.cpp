@@ -107,6 +107,34 @@ string getStationName(const string& code) {
 }
 
 // =====================================================================
+// 安全的整数输入函数：防止输入非数字导致 cin 死循环刷屏
+// =====================================================================
+int readInt() {
+    int value;
+    while (!(cin >> value)) {
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        cout << "输入无效，请输入数字: ";
+    }
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    return value;
+}
+
+// =====================================================================
+// 安全的浮点数输入函数
+// =====================================================================
+double readDouble() {
+    double value;
+    while (!(cin >> value)) {
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        cout << "输入无效，请输入数字: ";
+    }
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    return value;
+}
+
+// =====================================================================
 // 全局变量
 // =====================================================================
 int orderCounter = 1;  // 订单序号计数器，用于生成唯一的订单编号
@@ -189,8 +217,7 @@ CargoType inputCargoType() {
     cout << "  3. 药品" << endl;
     cout << "  4. 贵重物品" << endl;
     cout << "请选择 (1-4): ";
-    cin >> choice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');  // 清除输入缓冲区
+    choice = readInt();
     switch (choice) {
         case 1: return Normal;
         case 2: return Fresh;
@@ -965,8 +992,7 @@ void adminAddDrone() {
     cout << "  3. 重型（载重≤" << HEAVY_MAX_WEIGHT << "kg，全品类，温控+保险锁）" << endl;
     cout << "请选择 (1-3): ";
     int levelChoice;
-    cin >> levelChoice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    levelChoice = readInt();
 
     // 输入无人机编号
     string newID;
@@ -1247,8 +1273,7 @@ void adminLoop() {
     do {
         clearScreen();
         displayAdminMenu();
-        cin >> choice;
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        choice = readInt();
         switch (choice) {
             case 1: adminAddDrone();              break;  // 添加无人机
             case 2: adminShowAllDrones();         break;  // 查看所有无人机
@@ -1327,8 +1352,7 @@ void deliverAssignOrder(string delivererID) {
     // 选择订单
     cout << "请选择要分配的订单 (1-" << pendingCount << "): ";
     int orderChoice;
-    cin >> orderChoice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    orderChoice = readInt();
     if (orderChoice < 1 || orderChoice > pendingCount) {
         cout << "无效选择！" << endl;
         waitForReturn();
@@ -1414,8 +1438,7 @@ void deliverAssignOrder(string delivererID) {
     // 选择无人机
     cout << "请选择无人机 (1-" << options.size() << "): ";
     int droneChoice;
-    cin >> droneChoice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    droneChoice = readInt();
     if (droneChoice < 1 || droneChoice > (int)options.size()) {
         cout << "无效选择！" << endl;
         waitForReturn();
@@ -1501,8 +1524,7 @@ void deliverExecute(string delivererID) {
     // 选择要执行的配送任务
     cout << "请选择要执行的配送任务 (1-" << tasks.size() << "): ";
     int choice;
-    cin >> choice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    choice = readInt();
     if (choice < 1 || choice > (int)tasks.size()) {
         cout << "无效选择！" << endl;
         waitForReturn();
@@ -1550,8 +1572,7 @@ void deliverLoop(string delivererID) {
     do {
         clearScreen();
         displayDeliverMenu(delivererID);
-        cin >> choice;
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        choice = readInt();
         switch (choice) {
             case 1: deliverShowPendingOrders();        break;  // 查看待处理订单
             case 2: deliverAssignOrder(delivererID);   break;  // 分配订单给无人机
@@ -1620,8 +1641,7 @@ void userPlaceOrder(string userName) {
     // 输入重量
     double w;
     cout << "货物重量(kg): ";
-    cin >> w;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    w = readDouble();
     if (w <= 0) {
         cout << "重量必须大于0！下单失败。" << endl;
         waitForReturn();
@@ -1662,8 +1682,7 @@ void userPlaceOrder(string userName) {
     cout << "  2. 预约配送（可提前1-3天）" << endl;
     cout << "请选择 (1/2): ";
     int modeChoice;
-    cin >> modeChoice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    modeChoice = readInt();
 
     time_t schedTime = 0;    // 预约时间戳，0=即日
     string timeSlot = "";    // 时段描述
@@ -1682,8 +1701,7 @@ void userPlaceOrder(string userName) {
         }
         cout << "请选择预约天数 (1-3): ";
         int dayChoice;
-        cin >> dayChoice;
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        dayChoice = readInt();
         if (dayChoice < 1 || dayChoice > 3) {
             cout << "无效选择，默认即日配送。" << endl;
         } else {
@@ -1696,8 +1714,7 @@ void userPlaceOrder(string userName) {
             cout << "  3. 晚上（17:00-21:00）" << endl;
             cout << "请选择 (1-3): ";
             int slotChoice;
-            cin >> slotChoice;
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            slotChoice = readInt();
             switch (slotChoice) {
                 case 1: timeSlot = "上午8-12"; break;
                 case 2: timeSlot = "下午12-17"; break;
@@ -1719,8 +1736,7 @@ void userPlaceOrder(string userName) {
     }
     cout << "请选择 (1-4): ";
     int fromChoice;
-    cin >> fromChoice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    fromChoice = readInt();
     if (fromChoice < 1 || fromChoice > 4) {
         cout << "无效选择，默认起点为天马公寓(A)。" << endl;
         fromChoice = 1;
@@ -1734,8 +1750,7 @@ void userPlaceOrder(string userName) {
     }
     cout << "请选择 (1-4): ";
     int toChoice;
-    cin >> toChoice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    toChoice = readInt();
     if (toChoice < 1 || toChoice > 4) {
         cout << "无效选择，默认终点为天马公寓(A)。" << endl;
         toChoice = 1;
@@ -1835,8 +1850,7 @@ void userConfirmReceive(string userName) {
     // 选择要确认收货的订单
     cout << "请选择要确认收货的订单 (1-" << deliveredCount << "): ";
     int choice;
-    cin >> choice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    choice = readInt();
     if (choice < 1 || choice > deliveredCount) {
         cout << "无效选择！" << endl;
         waitForReturn();
@@ -1893,8 +1907,7 @@ void userCancelOrder(string userName) {
     // 选择要取消的订单
     cout << "请选择要取消的订单 (1-" << cancelCount << "): ";
     int choice;
-    cin >> choice;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    choice = readInt();
     if (choice < 1 || choice > cancelCount) {
         cout << "无效选择！" << endl;
         waitForReturn();
@@ -1949,8 +1962,7 @@ void userLoop(string userName) {
     do {
         clearScreen();
         displayUserMenu(userName);
-        cin >> choice;
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        choice = readInt();
         switch (choice) {
             case 1: userPlaceOrder(userName);       break;  // 下单（即日/预约）
             case 2: userShowMyOrders(userName);     break;  // 查看我的订单
@@ -2068,8 +2080,7 @@ int main() {
     do {
         clearScreen();
         displayMainMenu();
-        cin >> choice;
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        choice = readInt();
 
         switch (choice) {
             case 1: {
