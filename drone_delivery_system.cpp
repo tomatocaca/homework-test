@@ -302,7 +302,7 @@ public:
              << ") → " << toStation << "(" << getStationName(toStation)
              << ")，预计 " << deliveryMinutes << " 分钟" << endl;
         cout << "收件人：" << recipientName << "  电话：" << recipientPhone << endl;
-        cout << "收件地址：" << recipientAddress << endl;
+        cout << "详细地址：" << recipientAddress << endl;
         cout << "下单用户：" << ownerName << endl;
         cout << "订单状态：" << orderStateToString(orderState) << endl;
     }
@@ -801,6 +801,8 @@ struct Account {
     string password;           // 登录密码（明文存储，不加密）
     string role;               // 角色类型："admin"管理员 / "deliver"配送员 / "user"普通用户
     string displayName;        // 显示名称
+    string idCard;             // 身份证号（下单前验证用）
+    string phone;              // 电话号码
     int cancelCount = 0;       // 本周取消订单次数
     time_t cancelWeekStart = 0;// 本周起始时间戳（用于判断是否跨周重置）
     time_t bannedUntil = 0;    // 封禁截止时间戳（0表示未被封禁）
@@ -900,14 +902,14 @@ vector<Account> accounts;
 // =====================================================================
 void initAccounts() {
     // ---- 管理员（1个），账号：admin，密码：admin123 ----
-    accounts.push_back({"admin", "admin123", "admin", "管理员"});
+    accounts.push_back({"admin", "admin123", "admin", "管理员", "", ""});
     // ---- 配送员（2个），账号：delivery001/delivery002，密码：del001/del002 ----
-    accounts.push_back({"delivery001", "del001", "deliver", "配送员delivery001"});
-    accounts.push_back({"delivery002", "del002", "deliver", "配送员delivery002"});
+    accounts.push_back({"delivery001", "del001", "deliver", "配送员delivery001", "", ""});
+    accounts.push_back({"delivery002", "del002", "deliver", "配送员delivery002", "", ""});
     // ---- 普通用户（3个），账号：user001/user002/user003，密码：123456 ----
-    accounts.push_back({"user001", "123456", "user", "张三"});
-    accounts.push_back({"user002", "123456", "user", "李四"});
-    accounts.push_back({"user003", "123456", "user", "赵六"});
+    accounts.push_back({"user001", "123456", "user", "张三", "110101199001011234", "13800001111"});
+    accounts.push_back({"user002", "123456", "user", "李四", "110101199002022345", "13800002222"});
+    accounts.push_back({"user003", "123456", "user", "赵六", "110101199003033456", "13800003333"});
 }
 
 // =====================================================================
@@ -1582,6 +1584,36 @@ void userPlaceOrder(string userName) {
     clearScreen();
     cout << "\n=========== 下单 ===========" << endl;
 
+    // 先从 accounts 中找到当前用户
+    Account* myAcc = NULL;
+    for (size_t i = 0; i < accounts.size(); i++) {
+        if (accounts[i].username == userName) {
+            myAcc = &accounts[i];
+            break;
+        }
+    }
+    if (!myAcc) { cout << "错误：找不到账户！" << endl; waitForReturn(); return; }
+
+    // 检查是否被封禁（被封禁用户不能下单）
+    if (isBanned(*myAcc)) {
+        cout << "\n⚠ 您的账号已被封禁至 " << formatBanTime(myAcc->bannedUntil)
+             << "（剩余 " << getBanRemainingDays(*myAcc) << " 天），无法下单！" << endl;
+        waitForReturn();
+        return;
+    }
+
+    // 身份证验证
+    cout << "\n请输入身份证号验证身份: ";
+    string inputId;
+    cin >> inputId;
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    if (inputId != myAcc->idCard) {
+        cout << "身份证号错误！下单失败。" << endl;
+        waitForReturn();
+        return;
+    }
+    cout << "身份验证通过！" << endl;
+
     // 选择货物类型
     CargoType ct = inputCargoType();
 
@@ -1724,7 +1756,7 @@ void userPlaceOrder(string userName) {
     getline(cin, rname);
     cout << "收件人电话: ";
     getline(cin, rphone);
-    cout << "收件地址: ";
+    cout << "详细地址: ";
     getline(cin, raddr);
 
     // 输入货物描述
@@ -1931,6 +1963,83 @@ void userLoop(string userName) {
 }
 
 // =====================================================================
+// 注册新用户：提供用户名、密码、确认密码、身份证号、电话号码
+// =====================================================================
+void userRegister() {
+    clearScreen();
+    cout << "\n=========== 用户注册 ===========" << endl;
+
+    string username, password, confirmPwd, idCard, phone;
+
+    // 输入用户名
+    cout << "用户名: ";
+    getline(cin, username);
+    // 检查用户名是否已存在
+    for (size_t i = 0; i < accounts.size(); i++) {
+        if (accounts[i].username == username) {
+            cout << "该用户名已被注册！注册失败。" << endl;
+            waitForReturn();
+            return;
+        }
+    }
+
+    // 输入密码
+    cout << "密码: ";
+    getline(cin, password);
+    // 确认密码
+    cout << "确认密码: ";
+    getline(cin, confirmPwd);
+    if (password != confirmPwd) {
+        cout << "两次密码不一致！注册失败。" << endl;
+        waitForReturn();
+        return;
+    }
+
+    // 输入身份证号
+    cout << "身份证号: ";
+    getline(cin, idCard);
+    if (idCard.empty()) {
+        cout << "身份证号不能为空！注册失败。" << endl;
+        waitForReturn();
+        return;
+    }
+
+    // 输入电话号码
+    cout << "电话号码: ";
+    getline(cin, phone);
+    if (phone.empty()) {
+        cout << "电话号码不能为空！注册失败。" << endl;
+        waitForReturn();
+        return;
+    }
+
+    // 创建新账户，角色为普通用户
+    time_t now = time(0);
+    tm* nowTm = localtime(&now);
+    tm weekStart = *nowTm;
+    weekStart.tm_hour = 0; weekStart.tm_min = 0; weekStart.tm_sec = 0;
+    int daysFromMonday = nowTm->tm_wday == 0 ? 6 : nowTm->tm_wday - 1;
+    weekStart.tm_mday -= daysFromMonday;
+    time_t weekStartTime = mktime(&weekStart);
+
+    Account newAcc;
+    newAcc.username = username;
+    newAcc.password = password;
+    newAcc.role = "user";
+    newAcc.displayName = username;  // 默认显示名为用户名
+    newAcc.idCard = idCard;
+    newAcc.phone = phone;
+    newAcc.cancelCount = 0;
+    newAcc.cancelWeekStart = weekStartTime;
+    newAcc.bannedUntil = 0;
+    accounts.push_back(newAcc);
+
+    cout << "\n注册成功！请使用用户名 \"" << username << "\" 登录。" << endl;
+    cout << "（身份证号将在下单时用于身份验证）" << endl;
+    waitForReturn();
+}
+
+// =====================================================================
 // 主菜单：选择角色进入对应子系统
 // =====================================================================
 void displayMainMenu() {
@@ -1939,9 +2048,10 @@ void displayMainMenu() {
     cout << "  1. 管理员" << endl;
     cout << "  2. 配送员" << endl;
     cout << "  3. 普通用户" << endl;
+    cout << "  4. 注册新用户" << endl;
     cout << "  0. 退出系统" << endl;
     cout << "=======================================" << endl;
-    cout << "请选择 (0-3): ";
+    cout << "请选择 (0-4): ";
 }
 
 // =====================================================================
@@ -2002,18 +2112,22 @@ int main() {
                     waitForReturn();
                     break;
                 }
-                // 检查账号是否被封禁
+                // 封禁提醒：被封禁用户仍可登录，但不能下单
                 resetCancelCountIfNewWeek(*acc);   // 先刷新跨周数据
                 if (isBanned(*acc)) {
-                    cout << "\n⚠ 您的账号已被封禁至 " << formatBanTime(acc->bannedUntil)
-                         << "（剩余 " << getBanRemainingDays(*acc) << " 天），请联系管理员解封。" << endl;
-                    waitForReturn();
-                    break;
+                    cout << "\n⚠ 您的账号已被封禁，无法下单！（至 "
+                         << formatBanTime(acc->bannedUntil) << "，剩余 "
+                         << getBanRemainingDays(*acc) << " 天）" << endl;
                 }
                 cout << "\n用户 " << acc->displayName << " 登录成功！" << endl;
                 cout << "（本周已取消订单 " << acc->cancelCount << " / 3 次）" << endl;
                 waitForReturn();
                 userLoop(acc->username);  // 传入账号名作为用户标识
+                break;
+            }
+            case 4: {
+                // 注册新用户
+                userRegister();
                 break;
             }
             case 0: {
