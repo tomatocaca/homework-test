@@ -71,14 +71,17 @@ const double LIGHT_MAX_WEIGHT = 5.0;    // 轻型无人机最大载重(kg)
 const double MEDIUM_MAX_WEIGHT = 20.0;  // 中型无人机最大载重(kg)
 const double HEAVY_MAX_WEIGHT = 50.0;   // 重型无人机最大载重(kg)
 const int MAX_DAILY_DELIVERIES = 5;     // 每架无人机每日最多配送次数
+const int CANCEL_THRESHOLD = 3;         // 每周取消订单次数上限（超过则封禁）
+const int BAN_DAYS = 14;               // 封禁天数（2周）
+const int STATION_COUNT = 4;           // 站点总数
 
 // =====================================================================
 // 配送地图：4个站点，相邻站点之间配送时长10分钟
 // 线路：A(天马公寓) — B(德智公寓) — C(综合楼) — D(东方红广场)
 // =====================================================================
 // 站点名称数组，索引0=A, 1=B, 2=C, 3=D
-const string STATION_NAMES[4] = {"天马公寓", "德智公寓", "综合楼", "东方红广场"};
-const string STATION_CODES[4] = {"A", "B", "C", "D"};       // 站点代号
+const string STATION_NAMES[STATION_COUNT] = {"天马公寓", "德智公寓", "综合楼", "东方红广场"};
+const string STATION_CODES[STATION_COUNT] = {"A", "B", "C", "D"};       // 站点代号
 const int SEGMENT_TIME = 10;    // 相邻站点间配送时长（分钟）
 
 // =====================================================================
@@ -87,7 +90,7 @@ const int SEGMENT_TIME = 10;    // 相邻站点间配送时长（分钟）
 // =====================================================================
 int calcDeliveryTime(const string& from, const string& to) {
     int fi = -1, ti = -1;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < STATION_COUNT; i++) {
         if (STATION_CODES[i] == from) fi = i;
         if (STATION_CODES[i] == to)   ti = i;
     }
@@ -100,7 +103,7 @@ int calcDeliveryTime(const string& from, const string& to) {
 // 根据站点代号获取站点中文名
 // =====================================================================
 string getStationName(const string& code) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < STATION_COUNT; i++) {
         if (STATION_CODES[i] == code) return STATION_NAMES[i];
     }
     return "未知";
@@ -138,6 +141,64 @@ double readDouble() {
 // 全局变量
 // =====================================================================
 int orderCounter = 1;  // 订单序号计数器，用于生成唯一的订单编号
+
+// =====================================================================
+// 工具函数：按用户名查找账户（返回指针，未找到返回NULL）
+// =====================================================================
+Account* findAccountByName(const string& name) {
+    for (size_t i = 0; i < accounts.size(); i++) {
+        if (accounts[i].username == name) return &accounts[i];
+    }
+    return NULL;
+}
+
+// =====================================================================
+// 工具函数：按订单编号查找订单（返回指针，未找到返回NULL）
+// =====================================================================
+Order* findOrderByID(const string& oid) {
+    for (size_t i = 0; i < allOrders.size(); i++) {
+        if (allOrders[i].getOrderID() == oid) return &allOrders[i];
+    }
+    return NULL;
+}
+
+// =====================================================================
+// 工具函数：释放被分配订单的无人机（取消已分配订单时使用）
+// =====================================================================
+void releaseOrderDrone(const string& orderID) {
+    for (size_t j = 0; j < lightDrones.size(); j++) {
+        if (lightDrones[j].getAssignedOrderID() == orderID) {
+            lightDrones[j].setAssignedOrderID("#");
+            lightDrones[j].setAssignedBy("#");
+        }
+    }
+    for (size_t j = 0; j < mediumDrones.size(); j++) {
+        if (mediumDrones[j].getAssignedOrderID() == orderID) {
+            mediumDrones[j].setAssignedOrderID("#");
+            mediumDrones[j].setAssignedBy("#");
+        }
+    }
+    for (size_t j = 0; j < heavyDrones.size(); j++) {
+        if (heavyDrones[j].getAssignedOrderID() == orderID) {
+            heavyDrones[j].setAssignedOrderID("#");
+            heavyDrones[j].setAssignedBy("#");
+        }
+    }
+}
+
+// =====================================================================
+// 工具函数：统计忙碌无人机数量
+// =====================================================================
+int countBusyDrones() {
+    int busy = 0;
+    for (size_t i = 0; i < lightDrones.size(); i++)
+        if (lightDrones[i].getDroneState() != Idle) busy++;
+    for (size_t i = 0; i < mediumDrones.size(); i++)
+        if (mediumDrones[i].getDroneState() != Idle) busy++;
+    for (size_t i = 0; i < heavyDrones.size(); i++)
+        if (heavyDrones[i].getDroneState() != Idle) busy++;
+    return busy;
+}
 
 // =====================================================================
 // 辅助函数：将货物类型枚举转为中文字符串
@@ -269,10 +330,10 @@ public:
     }
 
     // ---------- 带参构造函数：用所有信息初始化订单 ----------
-    Order(string oid, CargoType ct, string rname, string rphone,
-          string raddr, double w, string desc, OrderState os, string owner,
-          time_t st = 0, string ts = "",
-          string fs = "A", string ds = "A", int dm = 0)
+    Order(const string& oid, CargoType ct, const string& rname, const string& rphone,
+          const string& raddr, double w, const string& desc, OrderState os, const string& owner,
+          time_t st = 0, const string& ts = "",
+          const string& fs = "A", const string& ds = "A", int dm = 0)
         : orderID(oid), cargoType(ct), recipientName(rname),
           recipientPhone(rphone), recipientAddress(raddr),
           weight(w), description(desc), orderState(os), ownerName(owner),
@@ -375,7 +436,7 @@ public:
     }
 
     // ---------- 带参构造函数 ----------
-    Drone(string did, DroneState ds, DroneLevel dl, double mw, string loc = "A")
+    Drone(const string& did, DroneState ds, DroneLevel dl, double mw, const string& loc = "A")
         : droneID(did), droneState(ds), level(dl),
           maxWeight(mw), deliveryCount(0),
           assignedOrderID("#"), assignedBy("#"),
@@ -397,10 +458,11 @@ public:
     virtual ~Drone() {}
 
     // ===== 纯虚函数：子类必须实现 =====
-    // 检查该无人机是否能运送指定类型的货物（子类根据等级限制重写）
     virtual bool canCarry(CargoType ct) const = 0;
-    // 获取该无人机的特殊功能描述（温控、保险锁等）
     virtual string getSpecialFeatures() const = 0;
+
+    // ===== 虚函数钩子：子类重写以在配送时输出专属提示（温控/保险锁等）=====
+    virtual void printSpecialActions(const Order&) const {}
 
     // ===== 虚函数：子类可重写，基类提供默认实现 =====
     // 执行配送过程（接受全局订单列表引用，以便更新订单状态）
@@ -409,13 +471,7 @@ public:
             cout << "无人机 " << droneID << " 没有待配送的订单！" << endl;
             return;
         }
-        Order* order = NULL;
-        for (size_t i = 0; i < allOrders.size(); i++) {
-            if (allOrders[i].getOrderID() == assignedOrderID) {
-                order = &allOrders[i];
-                break;
-            }
-        }
+        Order* order = findOrderByID(assignedOrderID);
         if (!order) {
             cout << "错误：找不到订单 " << assignedOrderID << "！" << endl;
             return;
@@ -439,6 +495,7 @@ public:
         order->setOrderState(Delivering);
         cout << "\n=== " << droneLevelToString(level) << "无人机 "
              << droneID << " 正在配送 ===" << endl;
+        printSpecialActions(*order);
         cout << "起点：" << from << "(" << getStationName(from) << ")"
              << " → 终点：" << to << "(" << getStationName(to) << ")" << endl;
         cout << "订单：" << order->getOrderID() << " | 货物："
@@ -478,8 +535,8 @@ public:
     }
 
     // ===== Setter 函数（修改无人机的任务绑定） =====
-    void setAssignedOrderID(string oid) { assignedOrderID = oid; }
-    void setAssignedBy(string ab) { assignedBy = ab; }
+    void setAssignedOrderID(const string& oid) { assignedOrderID = oid; }
+    void setAssignedBy(const string& ab) { assignedBy = ab; }
 
     // ---------- 检查是否有分配的订单 ----------
     bool hasOrder() const { return assignedOrderID != "#"; }
@@ -519,7 +576,7 @@ public:
     LightDrone() : Drone("L000", Idle, LightDroneLevel, LIGHT_MAX_WEIGHT) {}
 
     // ---------- 带参构造函数：可自定义编号和状态 ----------
-    LightDrone(string did, DroneState ds)
+    LightDrone(const string& did, DroneState ds)
         : Drone(did, ds, LightDroneLevel, LIGHT_MAX_WEIGHT) {}
 
     // ---------- 复制构造函数 ----------
@@ -538,55 +595,9 @@ public:
         return "无";
     }
 
-    // ---------- 重写配送函数：加入轻型专属提示 ----------
+    // ---------- 重写配送函数：调用基类实现 ----------
     void deliver(vector<Order>& allOrders) override {
-        if (!hasOrder()) {
-            cout << "轻型无人机 " << droneID << " 没有待配送的订单！" << endl;
-            return;
-        }
-        Order* order = NULL;
-        for (size_t i = 0; i < allOrders.size(); i++) {
-            if (allOrders[i].getOrderID() == assignedOrderID) {
-                order = &allOrders[i];
-                break;
-            }
-        }
-        if (!order) {
-            cout << "错误：找不到订单 " << assignedOrderID << "！" << endl;
-            return;
-        }
-        // 检查是否达到当日配送上限
-        if (deliveryCount >= MAX_DAILY_DELIVERIES) {
-            cout << "轻型无人机 " << droneID << " 当日已达配送上限（"
-                 << MAX_DAILY_DELIVERIES << "次），无法继续配送！" << endl;
-            assignedOrderID = "#";
-            assignedBy = "#";
-            order->setOrderState(Pending);
-            return;
-        }
-        // 轻型配送：记录起点终点和开始时间
-        string from = order->getFromStation();
-        string to   = order->getToStation();
-        int minutes = calcDeliveryTime(from, to);
-        droneState = DRDelivering;
-        targetStation = to;
-        deliveryTotalMinutes = minutes;
-        deliveryStartTime = time(0);
-        order->setOrderState(Delivering);
-        cout << "\n=== 轻型无人机 " << droneID << " 起飞配送 ===" << endl;
-        cout << "路线：" << from << "(" << getStationName(from) << ")"
-             << " → " << to << "(" << getStationName(to) << ")" << endl;
-        cout << "订单：" << order->getOrderID() << " | 货物："
-             << order->getDescription() << " | 预计 " << minutes << " 分钟" << endl;
-        order->setOrderState(Delivered);
-        deliveryCount++;
-        currentLocation = to;
-        droneState = Idle;
-        assignedOrderID = "#";
-        assignedBy = "#";
-        deliveryStartTime = 0;
-        cout << "轻型无人机 " << droneID << " 已到达 " << getStationName(to)
-             << "，配送完成！（当日第 " << deliveryCount << " 次）" << endl;
+        Drone::deliver(allOrders);
     }
 
     // ---------- 重写显示函数 ----------
@@ -605,7 +616,7 @@ public:
     MediumDrone() : Drone("M000", Idle, MediumDroneLevel, MEDIUM_MAX_WEIGHT) {}
 
     // ---------- 带参构造函数 ----------
-    MediumDrone(string did, DroneState ds)
+    MediumDrone(const string& did, DroneState ds)
         : Drone(did, ds, MediumDroneLevel, MEDIUM_MAX_WEIGHT) {}
 
     // ---------- 复制构造函数 ----------
@@ -624,58 +635,17 @@ public:
         return "温控系统（恒温 2°C-8°C，保障生鲜/药品品质）";
     }
 
-    // ---------- 重写配送函数：加入温控系统提示 ----------
-    void deliver(vector<Order>& allOrders) override {
-        if (!hasOrder()) {
-            cout << "中型无人机 " << droneID << " 没有待配送的订单！" << endl;
-            return;
-        }
-        Order* order = NULL;
-        for (size_t i = 0; i < allOrders.size(); i++) {
-            if (allOrders[i].getOrderID() == assignedOrderID) {
-                order = &allOrders[i];
-                break;
-            }
-        }
-        if (!order) {
-            cout << "错误：找不到订单 " << assignedOrderID << "！" << endl;
-            return;
-        }
-        // 检查是否达到当日配送上限
-        if (deliveryCount >= MAX_DAILY_DELIVERIES) {
-            cout << "中型无人机 " << droneID << " 当日已达配送上限（"
-                 << MAX_DAILY_DELIVERIES << "次），无法继续配送！" << endl;
-            assignedOrderID = "#";
-            assignedBy = "#";
-            order->setOrderState(Pending);
-            return;
-        }
-        string from = order->getFromStation();
-        string to   = order->getToStation();
-        int minutes = calcDeliveryTime(from, to);
-        droneState = DRDelivering;
-        targetStation = to;
-        deliveryTotalMinutes = minutes;
-        deliveryStartTime = time(0);
-        order->setOrderState(Delivering);
-        cout << "\n=== 中型无人机 " << droneID << " 起飞配送 ===" << endl;
-        if (order->getCargoType() == Fresh || order->getCargoType() == Medicine) {
+    // ---------- 中型专属：温控系统提示 ----------
+    void printSpecialActions(const Order& order) const override {
+        if (order.getCargoType() == Fresh || order.getCargoType() == Medicine) {
             cout << "【温控系统已启动】货舱恒温 2°C-8°C，保障"
-                 << cargoTypeToString(order->getCargoType()) << "品质" << endl;
+                 << cargoTypeToString(order.getCargoType()) << "品质" << endl;
         }
-        cout << "路线：" << from << "(" << getStationName(from) << ")"
-             << " → " << to << "(" << getStationName(to) << ")" << endl;
-        cout << "订单：" << order->getOrderID() << " | 货物："
-             << order->getDescription() << " | 预计 " << minutes << " 分钟" << endl;
-        order->setOrderState(Delivered);
-        deliveryCount++;
-        currentLocation = to;
-        droneState = Idle;
-        assignedOrderID = "#";
-        assignedBy = "#";
-        deliveryStartTime = 0;
-        cout << "中型无人机 " << droneID << " 已到达 " << getStationName(to)
-             << "，配送完成！（当日第 " << deliveryCount << " 次）" << endl;
+    }
+
+    // ---------- 重写配送函数：调用基类实现 ----------
+    void deliver(vector<Order>& allOrders) override {
+        Drone::deliver(allOrders);
     }
 
     // ---------- 重写显示函数 ----------
@@ -694,7 +664,7 @@ public:
     HeavyDrone() : Drone("H000", Idle, HeavyDroneLevel, HEAVY_MAX_WEIGHT) {}
 
     // ---------- 带参构造函数 ----------
-    HeavyDrone(string did, DroneState ds)
+    HeavyDrone(const string& did, DroneState ds)
         : Drone(did, ds, HeavyDroneLevel, HEAVY_MAX_WEIGHT) {}
 
     // ---------- 复制构造函数 ----------
@@ -713,63 +683,19 @@ public:
         return "温控系统 + 保险锁（贵重物品加密锁定，安全运输）";
     }
 
-    // ---------- 重写配送函数：温控 + 保险锁 ----------
-    void deliver(vector<Order>& allOrders) override {
-        if (!hasOrder()) {
-            cout << "重型无人机 " << droneID << " 没有待配送的订单！" << endl;
-            return;
-        }
-        Order* order = NULL;
-        for (size_t i = 0; i < allOrders.size(); i++) {
-            if (allOrders[i].getOrderID() == assignedOrderID) {
-                order = &allOrders[i];
-                break;
-            }
-        }
-        if (!order) {
-            cout << "错误：找不到订单 " << assignedOrderID << "！" << endl;
-            return;
-        }
-        // 检查是否达到当日配送上限
-        if (deliveryCount >= MAX_DAILY_DELIVERIES) {
-            cout << "重型无人机 " << droneID << " 当日已达配送上限（"
-                 << MAX_DAILY_DELIVERIES << "次），无法继续配送！" << endl;
-            assignedOrderID = "#";
-            assignedBy = "#";
-            order->setOrderState(Pending);
-            return;
-        }
-        string from = order->getFromStation();
-        string to   = order->getToStation();
-        int minutes = calcDeliveryTime(from, to);
-        droneState = DRDelivering;
-        targetStation = to;
-        deliveryTotalMinutes = minutes;
-        deliveryStartTime = time(0);
-        order->setOrderState(Delivering);
-        cout << "\n=== 重型无人机 " << droneID << " 起飞配送 ===" << endl;
-        if (order->getCargoType() == Fresh || order->getCargoType() == Medicine) {
+    // ---------- 重型专属：温控 + 保险锁提示 ----------
+    void printSpecialActions(const Order& order) const override {
+        if (order.getCargoType() == Fresh || order.getCargoType() == Medicine) {
             cout << "【温控系统已启动】货舱恒温 2°C-8°C" << endl;
         }
-        if (order->getCargoType() == Valuable) {
+        if (order.getCargoType() == Valuable) {
             cout << "【保险锁已激活】贵重物品已加密锁定，需收件人身份验证解锁" << endl;
         }
-        cout << "路线：" << from << "(" << getStationName(from) << ")"
-             << " → " << to << "(" << getStationName(to) << ")" << endl;
-        cout << "订单：" << order->getOrderID() << " | 货物："
-             << order->getDescription() << " | 预计 " << minutes << " 分钟" << endl;
-        order->setOrderState(Delivered);
-        deliveryCount++;
-        currentLocation = to;
-        droneState = Idle;
-        assignedOrderID = "#";
-        assignedBy = "#";
-        deliveryStartTime = 0;
-        if (order->getCargoType() == Valuable) {
-            cout << "【保险锁已解除】贵重物品安全送达" << endl;
-        }
-        cout << "重型无人机 " << droneID << " 已到达 " << getStationName(to)
-             << "，配送完成！（当日第 " << deliveryCount << " 次）" << endl;
+    }
+
+    // ---------- 重写配送函数：调用基类实现 ----------
+    void deliver(vector<Order>& allOrders) override {
+        Drone::deliver(allOrders);
     }
 
     // ---------- 重写显示函数 ----------
@@ -790,21 +716,11 @@ vector<HeavyDrone>  heavyDrones;   // 重型无人机列表
 // 预置数据初始化：创建初始无人机和示例订单
 // =====================================================================
 void initPresetData() {
-    // ---- 添加预置轻型无人机（L001, L002） ----
-    LightDrone ld1("L001", Idle);
-    LightDrone ld2("L002", Idle);
-    lightDrones.push_back(ld1);
-    lightDrones.push_back(ld2);
-
-    // ---- 添加预置中型无人机（M001, M002） ----
-    MediumDrone md1("M001", Idle);
-    MediumDrone md2("M002", Idle);
-    mediumDrones.push_back(md1);
-    mediumDrones.push_back(md2);
-
-    // ---- 添加预置重型无人机（H001） ----
-    HeavyDrone hd1("H001", Idle);
-    heavyDrones.push_back(hd1);
+    lightDrones.push_back(LightDrone("L001", Idle));
+    lightDrones.push_back(LightDrone("L002", Idle));
+    mediumDrones.push_back(MediumDrone("M001", Idle));
+    mediumDrones.push_back(MediumDrone("M002", Idle));
+    heavyDrones.push_back(HeavyDrone("H001", Idle));
 
     // ---- 添加预设示例订单，方便演示各角色功能 ----
     // (订单号, 类型, 姓名, 电话, 地址, 重量, 描述, 状态, 用户, 预约时间, 时段, 起点, 终点, 预计时长)
@@ -895,9 +811,9 @@ void recordCancellation(Account& acc) {
     resetCancelCountIfNewWeek(acc);               // 先检查是否需要跨周重置
     acc.cancelCount++;                            // 取消次数+1
     cout << "（本周已取消 " << acc.cancelCount << " 次）" << endl;
-    if (acc.cancelCount >= 3) {
+    if (acc.cancelCount >= CANCEL_THRESHOLD) {
         time_t now = time(0);
-        acc.bannedUntil = now + 14 * 24 * 60 * 60;// 封禁2周（14天）
+        acc.bannedUntil = now + BAN_DAYS * 24 * 60 * 60;
         cout << "⚠ 您的本周取消次数已达3次，账号已被封禁至 "
              << formatBanTime(acc.bannedUntil) << "！" << endl;
     }
@@ -952,15 +868,12 @@ Account* login(const string& role) {
     cin >> password;
     cin.ignore(numeric_limits<streamsize>::max(), '\n');  // 清除输入缓冲区
 
-    // 遍历所有账户，匹配账号、密码和角色
-    for (size_t i = 0; i < accounts.size(); i++) {
-        if (accounts[i].username == username
-            && accounts[i].password == password
-            && accounts[i].role == role) {
-            return &accounts[i];  // 登录成功，返回账户指针
+    for (auto& acc : accounts) {
+        if (acc.username == username && acc.password == password && acc.role == role) {
+            return &acc;
         }
     }
-    return NULL;  // 登录失败：账号或密码错误，或角色不匹配
+    return NULL;
 }
 
 // =====================================================================
@@ -1051,30 +964,9 @@ void adminAddDrone() {
 void adminShowAllDrones() {
     clearScreen();
     cout << "\n=========== 所有无人机信息 ===========" << endl;
-    // 显示轻型无人机
-    if (lightDrones.empty()) {
-        cout << "\n【轻型无人机】暂无" << endl;
-    } else {
-        for (size_t i = 0; i < lightDrones.size(); i++) {
-            lightDrones[i].Show();
-        }
-    }
-    // 显示中型无人机
-    if (mediumDrones.empty()) {
-        cout << "\n【中型无人机】暂无" << endl;
-    } else {
-        for (size_t i = 0; i < mediumDrones.size(); i++) {
-            mediumDrones[i].Show();
-        }
-    }
-    // 显示重型无人机
-    if (heavyDrones.empty()) {
-        cout << "\n【重型无人机】暂无" << endl;
-    } else {
-        for (size_t i = 0; i < heavyDrones.size(); i++) {
-            heavyDrones[i].Show();
-        }
-    }
+    for (auto& d : lightDrones)  d.Show();
+    for (auto& d : mediumDrones) d.Show();
+    for (auto& d : heavyDrones)  d.Show();
     cout << "\n总计：轻型 " << lightDrones.size()
          << " 架 | 中型 " << mediumDrones.size()
          << " 架 | 重型 " << heavyDrones.size() << " 架" << endl;
@@ -1090,9 +982,10 @@ void adminShowAllOrders() {
     if (allOrders.empty()) {
         cout << "暂无订单！" << endl;
     } else {
-        for (size_t i = 0; i < allOrders.size(); i++) {
-            cout << "\n--- 订单 #" << (i + 1) << " ---" << endl;
-            allOrders[i].Show();
+        int idx = 0;
+        for (auto& o : allOrders) {
+            cout << "\n--- 订单 #" << (++idx) << " ---" << endl;
+            o.Show();
         }
         cout << "\n订单总数：" << allOrders.size() << endl;
     }
@@ -1109,8 +1002,8 @@ void adminShowReport() {
     // ---- 统计各状态订单数 ----
     int cntPending = 0, cntAssigned = 0, cntDelivering = 0;
     int cntDelivered = 0, cntReceived = 0, cntCancelled = 0;
-    for (size_t i = 0; i < allOrders.size(); i++) {
-        switch (allOrders[i].getOrderState()) {
+    for (const auto& o : allOrders) {
+        switch (o.getOrderState()) {
             case Pending:    cntPending++;    break;
             case Assigned:   cntAssigned++;   break;
             case Delivering: cntDelivering++; break;
@@ -1128,8 +1021,8 @@ void adminShowReport() {
 
     // ---- 统计各类型订单数 ----
     int cntNormal = 0, cntFresh = 0, cntMedicine = 0, cntValuable = 0;
-    for (size_t i = 0; i < allOrders.size(); i++) {
-        switch (allOrders[i].getCargoType()) {
+    for (const auto& o : allOrders) {
+        switch (o.getCargoType()) {
             case Normal:   cntNormal++;   break;
             case Fresh:    cntFresh++;    break;
             case Medicine: cntMedicine++; break;
@@ -1140,18 +1033,8 @@ void adminShowReport() {
     cout << "普通货物：" << cntNormal   << " | 生鲜：" << cntFresh
          << " | 药品：" << cntMedicine << " | 贵重物品：" << cntValuable << endl;
 
-    // ---- 统计无人机使用率（有空闲/总数为正在使用） ----
     int totalDrones = lightDrones.size() + mediumDrones.size() + heavyDrones.size();
-    int busyDrones = 0;  // 非空闲的无人机数量
-    for (size_t i = 0; i < lightDrones.size(); i++) {
-        if (lightDrones[i].getDroneState() != Idle) busyDrones++;
-    }
-    for (size_t i = 0; i < mediumDrones.size(); i++) {
-        if (mediumDrones[i].getDroneState() != Idle) busyDrones++;
-    }
-    for (size_t i = 0; i < heavyDrones.size(); i++) {
-        if (heavyDrones[i].getDroneState() != Idle) busyDrones++;
-    }
+    int busyDrones = countBusyDrones();
     cout << "\n--- 无人机使用情况 ---" << endl;
     cout << "总数：" << totalDrones << " 架 | 使用中：" << busyDrones
          << " 架 | 空闲：" << (totalDrones - busyDrones) << " 架" << endl;
@@ -1217,21 +1100,19 @@ void adminManageUsers() {
     // 列出所有普通用户及其状态
     cout << "\n--- 普通用户状态 ---" << endl;
     int userCount = 0;
-    for (size_t i = 0; i < accounts.size(); i++) {
-        if (accounts[i].role == "user") {
-            // 跨周检查：先刷新取消次数
-            resetCancelCountIfNewWeek(accounts[i]);
-            bool banned = isBanned(accounts[i]);
-            cout << userCount + 1 << ". 账号：" << accounts[i].username
-                 << "（" << accounts[i].displayName << "）" << endl;
-            cout << "   本周取消次数：" << accounts[i].cancelCount << " / 3" << endl;
+    for (auto& acc : accounts) {
+        if (acc.role == "user") {
+            resetCancelCountIfNewWeek(acc);
+            bool banned = isBanned(acc);
+            cout << ++userCount << ". 账号：" << acc.username
+                 << "（" << acc.displayName << "）" << endl;
+            cout << "   本周取消次数：" << acc.cancelCount << " / 3" << endl;
             if (banned) {
-                cout << "   状态：已封禁（至 " << formatBanTime(accounts[i].bannedUntil)
-                     << "，剩余 " << getBanRemainingDays(accounts[i]) << " 天）" << endl;
+                cout << "   状态：已封禁（至 " << formatBanTime(acc.bannedUntil)
+                     << "，剩余 " << getBanRemainingDays(acc) << " 天）" << endl;
             } else {
                 cout << "   状态：正常" << endl;
             }
-            userCount++;
         }
     }
 
@@ -1248,15 +1129,14 @@ void adminManageUsers() {
     cin.ignore(numeric_limits<streamsize>::max(), '\n');
     if (uname == "0") return;
 
-    // 查找并解封
-    for (size_t i = 0; i < accounts.size(); i++) {
-        if (accounts[i].username == uname && accounts[i].role == "user") {
-            if (!isBanned(accounts[i])) {
+    for (auto& acc : accounts) {
+        if (acc.username == uname && acc.role == "user") {
+            if (!isBanned(acc)) {
                 cout << "该用户未被封禁！" << endl;
                 waitForReturn();
                 return;
             }
-            adminUnbanAccount(accounts[i]);
+            adminUnbanAccount(acc);
             waitForReturn();
             return;
         }
@@ -1290,7 +1170,7 @@ void adminLoop() {
 // =====================================================================
 // 配送员菜单：显示配送员可执行的操作
 // =====================================================================
-void displayDeliverMenu(string delivererID) {
+void displayDeliverMenu(const string& delivererID) {
     cout << "\n=========== 配送员菜单 [" << delivererID << "] ===========" << endl;
     cout << "1. 查看待处理订单" << endl;
     cout << "2. 分配订单给无人机" << endl;
@@ -1308,10 +1188,12 @@ void deliverShowPendingOrders() {
     clearScreen();
     cout << "\n=========== 待处理订单列表 ===========" << endl;
     bool found = false;
-    for (size_t i = 0; i < allOrders.size(); i++) {
-        if (allOrders[i].getOrderState() == Pending) {
-            cout << "\n--- 待处理订单 #" << (i + 1) << " ---" << endl;
-            allOrders[i].Show();
+    int idx = 0;
+    for (auto& o : allOrders) {
+        idx++;
+        if (o.getOrderState() == Pending) {
+            cout << "\n--- 待处理订单 #" << idx << " ---" << endl;
+            o.Show();
             found = true;
         }
     }
@@ -1325,22 +1207,21 @@ void deliverShowPendingOrders() {
 // 配送员功能2：分配待处理订单给空闲无人机
 // 逻辑：选择订单 → 选择空闲且能承运该货物的无人机 → 检查载重 → 绑定
 // =====================================================================
-void deliverAssignOrder(string delivererID) {
+void deliverAssignOrder(const string& delivererID) {
     clearScreen();
     cout << "\n=========== 分配订单给无人机 ===========" << endl;
 
     // 第一步：列出所有待处理的订单，让配送员选择
     cout << "\n--- 待处理订单 ---" << endl;
-    int pendingCount = 0;  // 待处理订单计数
-    vector<int> pendingIndices;  // 记录待处理订单在 allOrders 中的索引
+    int pendingCount = 0;
+    vector<int> pendingIndices;
     for (size_t i = 0; i < allOrders.size(); i++) {
         if (allOrders[i].getOrderState() == Pending) {
-            cout << pendingCount + 1 << ". 订单 " << allOrders[i].getOrderID()
+            cout << ++pendingCount << ". 订单 " << allOrders[i].getOrderID()
                  << " | " << cargoTypeToString(allOrders[i].getCargoType())
                  << " | " << allOrders[i].getWeight() << "kg"
                  << " | " << allOrders[i].getRecipientAddress() << endl;
             pendingIndices.push_back(i);
-            pendingCount++;
         }
     }
     if (pendingCount == 0) {
@@ -1465,7 +1346,7 @@ void deliverAssignOrder(string delivererID) {
 // =====================================================================
 // 配送员功能3：执行配送（选择已分配订单的无人机，模拟配送过程）
 // =====================================================================
-void deliverExecute(string delivererID) {
+void deliverExecute(const string& delivererID) {
     clearScreen();
     cout << "\n=========== 执行配送 ===========" << endl;
 
@@ -1546,15 +1427,16 @@ void deliverExecute(string delivererID) {
 // =====================================================================
 // 配送员功能4：查看所有已完成订单（已分配/配送中/已送达/已收货）
 // =====================================================================
-void deliverShowRecords(string delivererID) {
+void deliverShowRecords(const string& delivererID) {
     clearScreen();
     cout << "\n=========== 已完成订单记录 ===========" << endl;
     bool found = false;
-    for (size_t i = 0; i < allOrders.size(); i++) {
-        // 显示所有非待处理状态的订单（即已被配送员处理过的）
-        if (allOrders[i].getOrderState() != Pending) {
-            cout << "\n--- 配送记录 #" << (i + 1) << " ---" << endl;
-            allOrders[i].Show();
+    int idx = 0;
+    for (auto& o : allOrders) {
+        idx++;
+        if (o.getOrderState() != Pending) {
+            cout << "\n--- 配送记录 #" << idx << " ---" << endl;
+            o.Show();
             found = true;
         }
     }
@@ -1567,7 +1449,7 @@ void deliverShowRecords(string delivererID) {
 // =====================================================================
 // 配送员主循环：接收菜单选择并分发到对应功能
 // =====================================================================
-void deliverLoop(string delivererID) {
+void deliverLoop(const string& delivererID) {
     int choice;
     do {
         clearScreen();
@@ -1587,7 +1469,7 @@ void deliverLoop(string delivererID) {
 // =====================================================================
 // 普通用户菜单：显示用户可执行的操作
 // =====================================================================
-void displayUserMenu(string userName) {
+void displayUserMenu(const string& userName) {
     cout << "\n=========== 用户菜单 [" << userName << "] ===========" << endl;
     cout << "1. 下单（即日/预约）" << endl;
     cout << "2. 查看我的订单" << endl;
@@ -1601,21 +1483,13 @@ void displayUserMenu(string userName) {
 // =====================================================================
 // 用户功能1：下单（可选择即日配送或3天内预约配送，选择时段）
 // =====================================================================
-void userPlaceOrder(string userName) {
+void userPlaceOrder(const string& userName) {
     clearScreen();
     cout << "\n=========== 下单 ===========" << endl;
 
-    // 先从 accounts 中找到当前用户
-    Account* myAcc = NULL;
-    for (size_t i = 0; i < accounts.size(); i++) {
-        if (accounts[i].username == userName) {
-            myAcc = &accounts[i];
-            break;
-        }
-    }
+    Account* myAcc = findAccountByName(userName);
     if (!myAcc) { cout << "错误：找不到账户！" << endl; waitForReturn(); return; }
 
-    // 检查是否被封禁（被封禁用户不能下单）
     if (isBanned(*myAcc)) {
         cout << "\n⚠ 您的账号已被封禁至 " << formatBanTime(myAcc->bannedUntil)
              << "（剩余 " << getBanRemainingDays(*myAcc) << " 天），无法下单！" << endl;
@@ -1730,7 +1604,7 @@ void userPlaceOrder(string userName) {
     cout << "\n【配送地图】A=天马公寓  B=德智公寓  C=综合楼  D=东方红广场" << endl;
     cout << "相邻站点间配送时长：" << SEGMENT_TIME << " 分钟" << endl;
     cout << "\n请选择配送起点：" << endl;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < STATION_COUNT; i++) {
         cout << "  " << (i + 1) << ". " << STATION_CODES[i]
              << " — " << STATION_NAMES[i] << endl;
     }
@@ -1744,7 +1618,7 @@ void userPlaceOrder(string userName) {
     string fromStation = STATION_CODES[fromChoice - 1];
 
     cout << "\n请选择配送终点：" << endl;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < STATION_COUNT; i++) {
         cout << "  " << (i + 1) << ". " << STATION_CODES[i]
              << " — " << STATION_NAMES[i] << endl;
     }
@@ -1760,7 +1634,7 @@ void userPlaceOrder(string userName) {
 
     while (fromStation == toStation) {
         cout << "\n起点和终点不能相同！请重新选择配送终点：" << endl;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < STATION_COUNT; i++) {
             if (STATION_CODES[i] != fromStation) {
                 cout << "  " << (i + 1) << ". " << STATION_CODES[i]
                      << " — " << STATION_NAMES[i] << endl;
@@ -1815,14 +1689,16 @@ void userPlaceOrder(string userName) {
 // =====================================================================
 // 用户功能2：查看当前用户的所有订单
 // =====================================================================
-void userShowMyOrders(string userName) {
+void userShowMyOrders(const string& userName) {
     clearScreen();
     cout << "\n=========== 我的订单 [" << userName << "] ===========" << endl;
     bool found = false;
-    for (size_t i = 0; i < allOrders.size(); i++) {
-        if (allOrders[i].getOwnerName() == userName) {
-            cout << "\n--- 订单 #" << (i + 1) << " ---" << endl;
-            allOrders[i].Show();
+    int idx = 0;
+    for (auto& o : allOrders) {
+        idx++;
+        if (o.getOwnerName() == userName) {
+            cout << "\n--- 订单 #" << idx << " ---" << endl;
+            o.Show();
             found = true;
         }
     }
@@ -1835,22 +1711,21 @@ void userShowMyOrders(string userName) {
 // =====================================================================
 // 用户功能3：确认收货（将"已送达"订单状态改为"已收货"）
 // =====================================================================
-void userConfirmReceive(string userName) {
+void userConfirmReceive(const string& userName) {
     clearScreen();
     cout << "\n=========== 确认收货 ===========" << endl;
 
     // 列出当前用户所有"已送达"状态的订单
     cout << "\n--- 可确认收货的订单 ---" << endl;
     int deliveredCount = 0;
-    vector<int> deliveredIndices;  // 记录已送达订单的索引
+    vector<int> deliveredIndices;
     for (size_t i = 0; i < allOrders.size(); i++) {
         if (allOrders[i].getOwnerName() == userName
             && allOrders[i].getOrderState() == Delivered) {
-            cout << deliveredCount + 1 << ". 订单 " << allOrders[i].getOrderID()
+            cout << ++deliveredCount << ". 订单 " << allOrders[i].getOrderID()
                  << " | " << cargoTypeToString(allOrders[i].getCargoType())
                  << " | " << allOrders[i].getDescription() << endl;
             deliveredIndices.push_back(i);
-            deliveredCount++;
         }
     }
 
@@ -1880,34 +1755,26 @@ void userConfirmReceive(string userName) {
 // =====================================================================
 // 用户功能4：取消订单（仅待处理/已分配状态可取消，记录取消次数）
 // =====================================================================
-void userCancelOrder(string userName) {
+void userCancelOrder(const string& userName) {
     clearScreen();
     cout << "\n=========== 取消订单 ===========" << endl;
 
-    // 先从 accounts 中找到当前用户
-    Account* myAcc = NULL;
-    for (size_t i = 0; i < accounts.size(); i++) {
-        if (accounts[i].username == userName) {
-            myAcc = &accounts[i];
-            break;
-        }
-    }
+    Account* myAcc = findAccountByName(userName);
     if (!myAcc) { cout << "错误：找不到账户！" << endl; waitForReturn(); return; }
 
     // 列出当前用户可取消的订单（仅待处理/已分配）
     cout << "\n--- 可取消的订单 ---" << endl;
     int cancelCount = 0;
-    vector<int> cancelIndices;  // 记录可取消订单的索引
+    vector<int> cancelIndices;
     for (size_t i = 0; i < allOrders.size(); i++) {
         if (allOrders[i].getOwnerName() == userName
             && (allOrders[i].getOrderState() == Pending
                 || allOrders[i].getOrderState() == Assigned)) {
-            cout << cancelCount + 1 << ". 订单 " << allOrders[i].getOrderID()
+            cout << ++cancelCount << ". 订单 " << allOrders[i].getOrderID()
                  << " | " << cargoTypeToString(allOrders[i].getCargoType())
                  << " | " << allOrders[i].getDescription()
                  << " | 状态：" << orderStateToString(allOrders[i].getOrderState()) << endl;
             cancelIndices.push_back(i);
-            cancelCount++;
         }
     }
 
@@ -1939,29 +1806,10 @@ void userCancelOrder(string userName) {
         return;
     }
 
-    // 如果是已分配状态，需要释放被分配的无人机
     if (allOrders[orderIndex].getOrderState() == Assigned) {
-        string cancelledOrderID = allOrders[orderIndex].getOrderID();
-        for (size_t j = 0; j < lightDrones.size(); j++) {
-            if (lightDrones[j].getAssignedOrderID() == cancelledOrderID) {
-                lightDrones[j].setAssignedOrderID("#");
-                lightDrones[j].setAssignedBy("#");
-            }
-        }
-        for (size_t j = 0; j < mediumDrones.size(); j++) {
-            if (mediumDrones[j].getAssignedOrderID() == cancelledOrderID) {
-                mediumDrones[j].setAssignedOrderID("#");
-                mediumDrones[j].setAssignedBy("#");
-            }
-        }
-        for (size_t j = 0; j < heavyDrones.size(); j++) {
-            if (heavyDrones[j].getAssignedOrderID() == cancelledOrderID) {
-                heavyDrones[j].setAssignedOrderID("#");
-                heavyDrones[j].setAssignedBy("#");
-            }
-        }
+        releaseOrderDrone(allOrders[orderIndex].getOrderID());
     }
-    allOrders[orderIndex].setOrderState(Cancelled); // 订单状态变为"已取消"
+    allOrders[orderIndex].setOrderState(Cancelled);
     cout << "\n订单 " << allOrders[orderIndex].getOrderID() << " 已取消！" << endl;
     recordCancellation(*myAcc);  // 记录取消次数（达到3次自动封禁）
     waitForReturn();
@@ -1970,7 +1818,7 @@ void userCancelOrder(string userName) {
 // =====================================================================
 // 用户主循环：接收菜单选择并分发到对应功能
 // =====================================================================
-void userLoop(string userName) {
+void userLoop(const string& userName) {
     int choice;
     do {
         clearScreen();
